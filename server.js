@@ -127,6 +127,11 @@ app.post('/api/mining/mine', authenticate, async (req, res) => {
     }
 });
 
+app.get("/", (req, res) => {
+    res.json({
+        status: true
+    })
+})
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

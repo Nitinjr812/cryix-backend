@@ -1,27 +1,60 @@
- 
-
-// Updated server.js
 const express = require('express');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
-const JWT_SECRET = 'nitinisnitinis82828282828337dhbhhnjj@sihcewofobbacbskjnxjskbdjwqbdw'; // Change this to a secure random string in production
+const JWT_SECRET = process.env.JWT_SECRET || 'nitinisnitinis82828282828337dhbhhnjj@sihcewofobbacbskjnxjskbdjwqbdw'; // Change this to a secure random string in production
 
 // Middleware
 app.use(express.json());
-app.use(cors());
+app.use(cors({
+  origin: '*', // Allow any origin in development - restrict this in production
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
-// MongoDB Connection
-mongoose.connect('mongodb+srv://nitin:Oio3pg0yQy4UQR8W@cluster0.lgmyvk0.mongodb.net/cryvix')
-  .then(() => console.log('Connected to MongoDB'))
-  .catch(err => console.error('MongoDB connection error:', err));
+// Improved MongoDB Connection with options
+mongoose.connect('mongodb+srv://nitin:Oio3pg0yQy4UQR8W@cluster0.lgmyvk0.mongodb.net/cryvix', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => console.log('Connected to MongoDB'))
+.catch(err => {
+  console.error('MongoDB connection error:', err);
+  // Don't exit process on Vercel - it will restart the function
+  // Just log the error and continue
+});
 
-// Import User model
-const User = require('./models/user');
+// Define User Schema directly in server.js if you don't have a separate model file
+// (You can move this to models/user.js if you prefer)
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  balance: { type: Number, default: 0 },
+  referralCode: { type: String, unique: true },
+  referredBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  referrals: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  miningBonus: { type: Number, default: 0 },
+  nextMineTime: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now }
+});
+
+// Generate a unique referral code before saving
+userSchema.pre('save', function(next) {
+  if (!this.referralCode) {
+    // Generate a random 8-character referral code
+    this.referralCode = crypto.randomBytes(4).toString('hex');
+  }
+  next();
+});
+
+// Create the User model
+const User = mongoose.model('User', userSchema);
 
 // Authentication Middleware
 const auth = async (req, res, next) => {
@@ -44,6 +77,7 @@ const auth = async (req, res, next) => {
     req.user = user;
     next();
   } catch (error) {
+    console.error('Auth middleware error:', error);
     res.status(401).json({ success: false, message: 'Authentication failed' });
   }
 };
@@ -51,8 +85,23 @@ const auth = async (req, res, next) => {
 // Register with referral
 app.post('/register', async (req, res) => {
   try {
+    console.log('Registration attempt with data:', {
+      username: req.body.username,
+      email: req.body.email,
+      hasPassword: !!req.body.password,
+      referralCode: req.body.referralCode
+    });
+
     const { username, email, password, referralCode } = req.body;
     
+    // Validate inputs
+    if (!username || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username, email, and password are required'
+      });
+    }
+
     // Check if user already exists
     const existingUser = await User.findOne({
       $or: [{ email }, { username }]
@@ -73,16 +122,25 @@ app.post('/register', async (req, res) => {
     const user = new User({
       username,
       email,
-      password: hashedPassword
+      password: hashedPassword,
+      balance: 0,
+      miningBonus: 0,
+      referrals: [],
+      nextMineTime: new Date()
     });
-
+  
     // Process referral if provided
     if (referralCode) {
+      console.log('Processing referral code:', referralCode);
       const referrer = await User.findOne({ referralCode });
       
       if (referrer) {
+        console.log('Referrer found:', referrer.username);
         // Set referredBy field
         user.referredBy = referrer._id;
+        
+        // Give the new user a mining bonus
+        user.miningBonus = 0.2; // 0.2 additional coins per mining
         
         // Add user to referrer's referrals list
         referrer.referrals.push(user._id);
@@ -90,24 +148,28 @@ app.post('/register', async (req, res) => {
         // Give referrer a reward
         referrer.balance += 5; // 5 coins reward
         
-        // Give the new user a mining bonus
-        user.miningBonus = 0.2; // 0.2 additional coins per mining
-        
         await referrer.save();
+        console.log('Referrer updated successfully');
+      } else {
+        console.log('No referrer found with code:', referralCode);
       }
     }
     
+    console.log('Saving new user');
     await user.save();
+    console.log('User saved successfully');
     
     res.status(201).json({
       success: true,
       message: referralCode ? 'User registered successfully with referral bonus!' : 'User registered successfully'
     });
   } catch (error) {
-    console.error('Registration error:', error);
+    console.error('Registration error:', error.message);
+    console.error('Full error stack:', error.stack);
     res.status(500).json({
       success: false,
-      message: 'Server error during registration'
+      message: 'Server error during registration',
+      error: error.message // Remove this in production
     });
   }
 });
@@ -116,6 +178,13 @@ app.post('/register', async (req, res) => {
 app.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username and password are required'
+      });
+    }
     
     // Find user
     const user = await User.findOne({ username });
@@ -166,7 +235,7 @@ app.get('/user', auth, async (req, res) => {
       path: 'referrals',
       select: 'username balance createdAt'
     });
-
+    
     // Populate referredBy with username
     await req.user.populate({
       path: 'referredBy',
@@ -226,7 +295,7 @@ app.post('/mine', auth, async (req, res) => {
     
     res.json({
       success: true,
-      message: `Mining successful! You earned ${ miningReward } coins.Next mining available in 12 hours.`,
+      message: `Mining successful! You earned ${miningReward} coins. Next mining available in 12 hours.`,
       newBalance: user.balance,
       nextMineTime: user.nextMineTime
     });
@@ -261,12 +330,31 @@ app.get('/team', auth, async (req, res) => {
   }
 });
 
+// Health check endpoint
 app.get("/", (req, res) => {
   res.json({
-    status: true
+    status: true,
+    message: "Server is running"
+  });
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({
+    success: false,
+    message: 'Internal server error'
+  });
+});
+
+// Handle 404s
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'Endpoint not found'
   });
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${ PORT } `);
+  console.log(`Server running on port ${PORT}`);
 });

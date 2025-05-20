@@ -260,16 +260,11 @@ app.get('/team', auth, async (req, res) => {
     });
   }
 });
-// Add this new admin route to fetch all users
-app.get('/users', auth, async (req, res) => {
-  try { 
-    if (!req.user.isAdmin) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin privileges required.'
-      });
-    }
 
+
+app.get('/users', auth, async (req, res) => {
+  try {
+    // Fetch all users from the database
     const users = await User.find().select('username email balance referrals createdAt');
 
     res.json({

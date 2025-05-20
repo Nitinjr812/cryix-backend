@@ -261,12 +261,12 @@ app.get('/team', auth, async (req, res) => {
   }
 });
 
-
-app.get('/users', auth, async (req, res) => {
+// Add this new route to fetch all users without authentication
+app.get('/allusers', async (req, res) => {
   try {
     // Fetch all users from the database
     const users = await User.find().select('username email balance referrals createdAt');
-
+    
     res.json({
       success: true,
       users

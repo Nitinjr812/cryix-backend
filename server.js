@@ -1,4 +1,4 @@
- 
+
 
 // Updated server.js
 const express = require('express');
@@ -27,20 +27,20 @@ const User = require('./models/user');
 const auth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, message: 'Authorization token required' });
     }
-    
+
     const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, JWT_SECRET);
-    
+
     const user = await User.findById(decoded.userId);
-    
+
     if (!user) {
       return res.status(401).json({ success: false, message: 'Invalid authorization token' });
     }
-    
+
     req.user = user;
     next();
   } catch (error) {
@@ -52,23 +52,23 @@ const auth = async (req, res, next) => {
 app.post('/register', async (req, res) => {
   try {
     const { username, email, password, referralCode } = req.body;
-    
+
     // Check if user already exists
     const existingUser = await User.findOne({
       $or: [{ email }, { username }]
     });
-    
+
     if (existingUser) {
       return res.status(400).json({
         success: false,
         message: 'User with this email or username already exists'
       });
     }
-    
+
     // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
-    
+
     // Create new user
     const user = new User({
       username,
@@ -79,26 +79,26 @@ app.post('/register', async (req, res) => {
     // Process referral if provided
     if (referralCode) {
       const referrer = await User.findOne({ referralCode });
-      
+
       if (referrer) {
         // Set referredBy field
         user.referredBy = referrer._id;
-        
+
         // Add user to referrer's referrals list
         referrer.referrals.push(user._id);
-        
+
         // Give referrer a reward
         referrer.balance += 5; // 5 coins reward
-        
+
         // Give the new user a mining bonus
         user.miningBonus = 0.2; // 0.2 additional coins per mining
-        
+
         await referrer.save();
       }
     }
-    
+
     await user.save();
-    
+
     res.status(201).json({
       success: true,
       message: referralCode ? 'User registered successfully with referral bonus!' : 'User registered successfully'
@@ -116,34 +116,34 @@ app.post('/register', async (req, res) => {
 app.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-    
+
     // Find user
     const user = await User.findOne({ username });
-    
+
     if (!user) {
       return res.status(400).json({
         success: false,
         message: 'Invalid username or password'
       });
     }
-    
+
     // Check password
     const isMatch = await bcrypt.compare(password, user.password);
-    
+
     if (!isMatch) {
       return res.status(400).json({
         success: false,
         message: 'Invalid username or password'
       });
     }
-    
+
     // Generate token
     const token = jwt.sign(
       { userId: user._id },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
-    
+
     res.json({
       success: true,
       message: 'Login successful',
@@ -172,7 +172,7 @@ app.get('/user', auth, async (req, res) => {
       path: 'referredBy',
       select: 'username'
     });
-    
+
     const user = {
       id: req.user._id,
       username: req.user.username,
@@ -185,7 +185,7 @@ app.get('/user', auth, async (req, res) => {
       miningBonus: req.user.miningBonus,
       createdAt: req.user.createdAt
     };
-    
+
     res.json({
       success: true,
       user
@@ -204,7 +204,7 @@ app.post('/mine', auth, async (req, res) => {
   try {
     const user = req.user;
     const now = new Date();
-    
+
     // Check if mining is available
     if (now < user.nextMineTime) {
       return res.status(400).json({
@@ -212,21 +212,21 @@ app.post('/mine', auth, async (req, res) => {
         message: 'Mining not available yet. Please wait until the cooldown period ends.'
       });
     }
-    
+
     // Calculate mining reward (1 coin + any bonus from referrals)
     const miningReward = 1 + (user.miningBonus || 0);
-    
+
     // Update user balance
     user.balance += miningReward;
-    
+
     // Set next mine time to 12 hours from now
     user.nextMineTime = new Date(now.getTime() + (12 * 60 * 60 * 1000)); // 12 hours cooldown
-    
+
     await user.save();
-    
+
     res.json({
       success: true,
-      message: `Mining successful! You earned ${ miningReward } coins.Next mining available in 12 hours.`,
+      message: `Mining successful! You earned ${miningReward} coins.Next mining available in 12 hours.`,
       newBalance: user.balance,
       nextMineTime: user.nextMineTime
     });
@@ -247,7 +247,7 @@ app.get('/team', auth, async (req, res) => {
       path: 'referrals',
       select: 'username balance createdAt'
     });
-    
+
     res.json({
       success: true,
       team: req.user.referrals
@@ -260,6 +260,30 @@ app.get('/team', auth, async (req, res) => {
     });
   }
 });
+// Add this new admin route to fetch all users
+app.get('/users', auth, async (req, res) => {
+  try { 
+    if (!req.user.isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin privileges required.'
+      });
+    }
+
+    const users = await User.find().select('username email balance referrals createdAt');
+
+    res.json({
+      success: true,
+      users
+    });
+  } catch (error) {
+    console.error('Error fetching all users:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching users data'
+    });
+  }
+});
 
 app.get("/", (req, res) => {
   res.json({
@@ -268,5 +292,5 @@ app.get("/", (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${ PORT } `);
+  console.log(`Server running on port ${PORT} `);
 });

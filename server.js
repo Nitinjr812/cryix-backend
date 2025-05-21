@@ -1,6 +1,3 @@
-
-
-// Updated server.js
 const express = require('express');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
@@ -23,7 +20,7 @@ mongoose.connect('mongodb+srv://nitin:Oio3pg0yQy4UQR8W@cluster0.lgmyvk0.mongodb.
 // Import User model
 const User = require('./models/user');
 
-// Authentication Middleware
+// Authentication Middleware for regular users
 const auth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -45,6 +42,29 @@ const auth = async (req, res, next) => {
     next();
   } catch (error) {
     res.status(401).json({ success: false, message: 'Authentication failed' });
+  }
+};
+
+// Authentication Middleware for admins
+const adminAuth = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'Authorization token required' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+
+    if (decoded.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Admin privileges required' });
+    }
+
+    req.adminId = decoded.userId;
+    next();
+  } catch (error) {
+    res.status(401).json({ success: false, message: 'Admin authentication failed' });
   }
 };
 
@@ -108,6 +128,51 @@ app.post('/register', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error during registration'
+    });
+  }
+});
+
+// Admin Login
+app.post('/admin/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    // Hardcoded admin credentials (in a real app, you would store this in the database)
+    const validAdminUsername = 'manish';
+    const validAdminPassword = 'manish09';
+
+    // Check credentials
+    if (username !== validAdminUsername || password !== validAdminPassword) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid admin credentials'
+      });
+    }
+
+    // Generate token for admin
+    const token = jwt.sign(
+      {
+        userId: 'admin-' + Date.now(), // Just a placeholder ID
+        role: 'admin'
+      },
+      JWT_SECRET,
+      { expiresIn: '12h' }
+    );
+
+    res.json({
+      success: true,
+      message: 'Admin login successful',
+      token,
+      admin: {
+        username: 'manish',
+        role: 'admin'
+      }
+    });
+  } catch (error) {
+    console.error('Admin login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during admin login'
     });
   }
 });
@@ -226,7 +291,7 @@ app.post('/mine', auth, async (req, res) => {
 
     res.json({
       success: true,
-      message: `Mining successful! You earned ${miningReward} coins.Next mining available in 12 hours.`,
+      message: `Mining successful! You earned ${miningReward} coins. Next mining available in 12 hours.`,
       newBalance: user.balance,
       nextMineTime: user.nextMineTime
     });
@@ -261,12 +326,103 @@ app.get('/team', auth, async (req, res) => {
   }
 });
 
-// Add this new route to fetch all users without authentication
+// Admin: Get all users with admin authentication
+app.get('/admin/users', adminAuth, async (req, res) => {
+  try {
+    // Fetch all users from the database
+    const users = await User.find().select('username email balance referrals referredBy nextMineTime miningBonus createdAt');
+
+    res.json({
+      success: true,
+      users
+    });
+  } catch (error) {
+    console.error('Admin users fetch error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching users data'
+    });
+  }
+});
+
+// Admin: Update user balance
+app.patch('/admin/users/:userId/balance', adminAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { balance } = req.body;
+
+    if (balance === undefined || isNaN(balance)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid balance value required'
+      });
+    }
+
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    user.balance = balance;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'User balance updated successfully',
+      user: {
+        id: user._id,
+        username: user.username,
+        balance: user.balance
+      }
+    });
+  } catch (error) {
+    console.error('Admin balance update error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while updating user balance'
+    });
+  }
+});
+
+// Admin: Delete user
+app.delete('/admin/users/:userId', adminAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    await User.findByIdAndDelete(userId);
+
+    res.json({
+      success: true,
+      message: 'User deleted successfully'
+    });
+  } catch (error) {
+    console.error('Admin user delete error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while deleting user'
+    });
+  }
+});
+
+// For public access - add a warning about removing this in production
 app.get('/allusers', async (req, res) => {
   try {
     // Fetch all users from the database
     const users = await User.find().select('username email balance referrals createdAt');
-    
+
     res.json({
       success: true,
       users
